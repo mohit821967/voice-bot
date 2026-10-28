@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Talk to Me – Voice Bot</title>
+<style>
+  :root { --bg:#f6f7fb; --card:#fff; --text:#1d2433; --muted:#667085; --accent:#4f46e5; --me:#eef2ff; --bot:#f2f4f7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1220; --card:#181c2e; --text:#e8eaf2; --muted:#9aa3b8; --accent:#818cf8; --me:#2a2f55; --bot:#22273d; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:720px; margin:0 auto; padding:24px 16px 40px; }
+  h1 { margin:0 0 4px; font-size:1.6rem; }
+  .sub { color:var(--muted); margin:0 0 20px; }
+  .card { background:var(--card); border-radius:16px; padding:16px; box-shadow:0 2px 12px rgba(0,0,0,.06); }
+  #chat { min-height:240px; max-height:50vh; overflow-y:auto; display:flex; flex-direction:column; gap:10px; }
+  .msg { padding:10px 14px; border-radius:14px; max-width:85%; line-height:1.45; }
+  .user { background:var(--me); align-self:flex-end; }
+  .assistant { background:var(--bot); align-self:flex-start; }
+  .empty { color:var(--muted); text-align:center; margin:auto; }
+  .controls { display:flex; flex-direction:column; align-items:center; gap:10px; margin-top:16px; }
+  #mic { width:84px; height:84px; border-radius:50%; border:none; background:var(--accent); color:#fff; font-size:2rem; cursor:pointer; transition:transform .15s; }
+  #mic.listening { animation:pulse 1.2s infinite; background:#dc2626; }
+  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+  #status { color:var(--muted); min-height:1.2em; text-align:center; }
+  form { display:flex; gap:8px; width:100%; }
+  input { flex:1; padding:12px; border-radius:10px; border:1px solid #ccd; font-size:1rem; background:var(--card); color:var(--text); }
+  button.send, button.chip { border:none; border-radius:10px; background:var(--accent); color:#fff; padding:0 16px; cursor:pointer; font-size:.95rem; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+  button.chip { background:var(--bot); color:var(--text); padding:8px 12px; }
+  .stop { background:none; border:1px solid var(--muted); color:var(--muted); border-radius:8px; padding:4px 10px; cursor:pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎙️ Talk to [YOUR NAME]</h1>
+  <p class="sub">Tap the mic and ask me anything, like my life story or my superpower. I'll answer out loud. You can also type.</p>
+
+  <div class="card">
+    <div id="chat"><p class="empty">Your conversation will appear here.</p></div>
+    <div class="controls">
+      <button id="mic" aria-label="Tap to speak">🎤</button>
+      <div id="status">Tap the mic to start speaking</div>
+      <button class="stop" id="stop" hidden>Stop speaking</button>
+      <form id="form">
+        <input id="text" placeholder="Or type your question here…" autocomplete="off">
+        <button class="send">Send</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="chips" id="chips"></div>
+</main>
+
+<script>
+const samples = [
+  "What should we know about your life story in a few sentences?",
+  "What's your #1 superpower?",
+  "What are the top 3 areas you'd like to grow in?",
+  "What misconception do your coworkers have about you?",
+  "How do you push your boundaries and limits?",
+];
+const chat = document.getElementById("chat");
+const statusEl = document.getElementById("status");
+const mic = document.getElementById("mic");
+const stopBtn = document.getElementById("stop");
+const history = [];
+
+samples.forEach(q => {
+  const b = document.createElement("button");
+  b.className = "chip"; b.textContent = q;
+  b.onclick = () => ask(q);
+  document.getElementById("chips").appendChild(b);
+});
+
+function add(role, text) {
+  chat.querySelector(".empty")?.remove();
+  const d = document.createElement("div");
+  d.className = "msg " + role; d.textContent = text;
+  chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+}
+
+function speak(text) {
+  if (!("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1; u.lang = "en-US";
+  u.onstart = () => { stopBtn.hidden = false; statusEl.textContent = "Speaking…"; };
+  u.onend = u.onerror = () => { stopBtn.hidden = true; statusEl.textContent = "Tap the mic to ask another question"; };
+  speechSynthesis.speak(u);
+}
+stopBtn.onclick = () => speechSynthesis.cancel();
+
+async function ask(q) {
+  q = q.trim(); if (!q) return;
+  add("user", q); history.push({ role: "user", content: q });
+  statusEl.textContent = "Thinking…";
+  try {
+    const r = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history }),
+    });
+    const data = await r.json();
+    const reply = data.reply || data.error || "Sorry, something went wrong.";
+    add("assistant", reply);
+    if (data.reply) history.push({ role: "assistant", content: reply });
+    speak(reply);
+  } catch {
+    statusEl.textContent = "Network error. Please try again.";
+  }
+}
+
+document.getElementById("form").onsubmit = e => {
+  e.preventDefault();
+  const t = document.getElementById("text");
+  ask(t.value); t.value = "";
+};
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR) {
+  mic.disabled = true; mic.style.opacity = .4;
+  statusEl.textContent = "Voice input isn't supported in this browser. Please type, or use Chrome/Edge.";
+} else {
+  const rec = new SR();
+  rec.lang = "en-US"; rec.interimResults = false;
+  let listening = false;
+  mic.onclick = () => {
+    if (listening) return rec.stop();
+    speechSynthesis.cancel();
+    try { rec.start(); } catch {}
+  };
+  rec.onstart = () => { listening = true; mic.classList.add("listening"); statusEl.textContent = "Listening… speak now"; };
+  rec.onend = () => { listening = false; mic.classList.remove("listening"); if (statusEl.textContent.startsWith("Listening")) statusEl.textContent = "Tap the mic to start speaking"; };
+  rec.onerror = e => {
+    statusEl.textContent = e.error === "not-allowed"
+      ? "Microphone blocked. Allow mic access in your browser and try again."
+      : "Didn't catch that. Tap the mic and try again.";
+  };
+  rec.onresult = e => ask(e.results[0][0].transcript);
+}
+</script>
+</body>
+</html>
