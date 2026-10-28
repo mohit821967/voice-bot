@@ -26,7 +26,7 @@ module.exports = async (req, res) => {
         Authorization: `Bearer ${process.env.GEMINI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+        model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
         temperature: 0.7,
         max_tokens: 1000,
         messages: [{ role: "system", content: persona }, ...history],

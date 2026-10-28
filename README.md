@@ -13,4 +13,4 @@ Works best in Chrome or Edge. Other browsers can use the text box.
 2. Fill in `persona.js` with your real details.
 3. Push this folder to a GitHub repo.
 4. On https://vercel.com, click New Project, import the repo, then add the environment variable `GEMINI_API_KEY`. Click Deploy.
-   Optional: set `GEMINI_MODEL` to use a different Gemini model (default `gemini-2.5-flash`).
+   Optional: set `GEMINI_MODEL` to use a different Gemini model (default `gemini-3.8-flash`).
