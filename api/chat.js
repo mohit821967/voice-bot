@@ -8,9 +8,9 @@ module.exports = async (req, res) => {
 
   const { messages = [] } = req.body || {};
   // Keep only the last few turns so requests stay small.
-  const history = messages.slice(-10).map((m) => ({
+  const history = messages.slice(-6).map((m) => ({
     role: m.role === "assistant" ? "assistant" : "user",
-    content: String(m.content || "").slice(0, 2000),
+    content: String(m.content || "").slice(0, 500),
   }));
 
   if (!process.env.GEMINI_API_KEY) {
@@ -20,13 +20,12 @@ module.exports = async (req, res) => {
   const primary = process.env.GEMINI_MODEL || "gemini-3.8-flash";
   const fallbacks = (process.env.GEMINI_FALLBACK_MODELS || "gemini-flash-latest,gemini-flash-lite-latest")
     .split(",").map((s) => s.trim()).filter(Boolean);
-  // Try the main model twice (free tier often returns 503/429 briefly), then each fallback once.
-  const attempts = [primary, primary, ...fallbacks.filter((m) => m !== primary)];
+  // Try each model once; a different model is usually faster than waiting on a busy one.
+  const attempts = [primary, ...fallbacks.filter((m) => m !== primary)];
 
   try {
     let lastError = "";
     for (let i = 0; i < attempts.length; i++) {
-      if (i > 0) await new Promise((r) => setTimeout(r, 800));
       const result = await callGemini(attempts[i], history);
       if (result.reply) return res.status(200).json({ reply: result.reply });
       console.error(attempts[i], result.status, result.error);
@@ -47,22 +46,39 @@ module.exports = async (req, res) => {
 };
 
 // Calls Gemini's OpenAI-compatible endpoint. Returns { reply } or { status, error }.
-async function callGemini(model, history) {
-  const r = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.GEMINI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.7,
-      max_tokens: 1000,
-      messages: [{ role: "system", content: persona }, ...history],
-    }),
-  });
+async function callGemini(model, history, lowThinking = true) {
+  const body = {
+    model,
+    temperature: 0.7,
+    max_tokens: 400,
+    messages: [{ role: "system", content: persona }, ...history],
+  };
+  // Short spoken answers don't need long "thinking", which is the main source of delay.
+  if (lowThinking) body.reasoning_effort = "low";
+
+  // Give up on a slow model after 8s so the next one gets a chance.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  let r;
+  try {
+    r = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.GEMINI_API_KEY}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    return { status: 0, error: e.name === "AbortError" ? "timed out" : e.message };
+  } finally {
+    clearTimeout(timer);
+  }
 
   const data = await r.json().catch(() => ({}));
+  // Some models reject reasoning_effort; retry once without it.
+  if (r.status === 400 && lowThinking) return callGemini(model, history, false);
   if (!r.ok) {
     // Gemini returns either an object or an array of error objects.
     const err = Array.isArray(data) ? data[0]?.error : data.error;

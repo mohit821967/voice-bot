@@ -79,22 +79,51 @@ function add(role, text) {
   chat.querySelector(".empty")?.remove();
   const d = document.createElement("div");
   d.className = "msg " + role; d.textContent = text;
+  // Replay button: a direct tap always works, even where phones block auto-speech.
+  if (role === "assistant" && "speechSynthesis" in window) {
+    const b = document.createElement("button");
+    b.textContent = "🔊"; b.title = "Play answer"; b.setAttribute("aria-label", "Play answer");
+    b.style.cssText = "margin-left:8px;border:0;background:none;font-size:1.1em;cursor:pointer";
+    b.onclick = () => speak(text);
+    d.appendChild(b);
+  }
   chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
 }
+
+// Phones only allow speech that starts from a tap. Speaking a silent utterance during the
+// tap "unlocks" speech, so the real answer can be spoken after the server replies.
+let speechUnlocked = false;
+function unlockSpeech() {
+  if (speechUnlocked || !("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(" ");
+  u.volume = 0;
+  speechSynthesis.speak(u);
+  speechUnlocked = true;
+}
+
+let voice = null;
+function pickVoice() {
+  const vs = speechSynthesis.getVoices();
+  voice = vs.find(v => v.lang === "en-US" && v.localService) || vs.find(v => v.lang.startsWith("en")) || null;
+}
+if ("speechSynthesis" in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
 
 function speak(text) {
   if (!("speechSynthesis" in window)) return;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 1; u.lang = "en-US";
+  if (voice) u.voice = voice;
   u.onstart = () => { stopBtn.hidden = false; statusEl.textContent = "Speaking…"; };
   u.onend = u.onerror = () => { stopBtn.hidden = true; statusEl.textContent = "Tap the mic to ask another question"; };
-  speechSynthesis.speak(u);
+  // Chrome on Android can drop speech queued right after cancel(), so wait a moment.
+  setTimeout(() => speechSynthesis.speak(u), 100);
 }
 stopBtn.onclick = () => speechSynthesis.cancel();
 
 async function ask(q) {
   q = q.trim(); if (!q) return;
+  unlockSpeech();
   add("user", q); history.push({ role: "user", content: q });
   statusEl.textContent = "Thinking…";
   try {
@@ -128,6 +157,7 @@ if (!SR) {
   let listening = false;
   mic.onclick = () => {
     if (listening) return rec.stop();
+    unlockSpeech();
     speechSynthesis.cancel();
     try { rec.start(); } catch {}
   };
