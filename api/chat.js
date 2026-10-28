@@ -13,6 +13,10 @@ module.exports = async (req, res) => {
     content: String(m.content || "").slice(0, 2000),
   }));
 
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(500).json({ error: "Server is missing GEMINI_API_KEY. Add it in Vercel and redeploy." });
+  }
+
   try {
     // Gemini's OpenAI-compatible endpoint.
     const r = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
@@ -24,7 +28,7 @@ module.exports = async (req, res) => {
       body: JSON.stringify({
         model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
         temperature: 0.7,
-        max_tokens: 300,
+        max_tokens: 1000,
         messages: [{ role: "system", content: persona }, ...history],
       }),
     });
@@ -32,9 +36,17 @@ module.exports = async (req, res) => {
     const data = await r.json();
     if (!r.ok) {
       console.error(data);
-      return res.status(500).json({ error: "The AI service had a problem. Please try again." });
+      // Gemini returns either an object or an array of error objects.
+      const err = Array.isArray(data) ? data[0]?.error : data.error;
+      const detail = err?.message ? ` (${r.status}: ${err.message})` : ` (${r.status})`;
+      return res.status(500).json({ error: "The AI service had a problem." + detail });
     }
-    res.status(200).json({ reply: data.choices[0].message.content.trim() });
+    const reply = data.choices?.[0]?.message?.content;
+    if (!reply) {
+      console.error(data);
+      return res.status(500).json({ error: "The AI returned an empty answer. Please try again." });
+    }
+    res.status(200).json({ reply: reply.trim() });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not reach the AI service. Please try again." });
